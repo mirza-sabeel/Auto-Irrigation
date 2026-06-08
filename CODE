@@ -1,80 +1,127 @@
-#include <Wire.h>
-#include "SparkFun_BMA400_Arduino_Library.h"
+// Two-pump irrigation control with averaging filter
+// Pump1: Relay on GPIO 26, Sensor on GPIO 35
+// Pump2: Relay on GPIO 25, Sensor on GPIO 34
+// Relay active LOW (LOW = ON, HIGH = OFF)
 
-BMA400 bma;
+#define RELAY1_PIN   26
+#define SENSOR1_PIN  35
 
-#define BUZZER_PIN 8
-#define LED_PIN    9
+#define RELAY2_PIN   25
+#define SENSOR2_PIN  34
 
-float prevX = 0, prevY = 0, prevZ = 0;
+// Per-pump thresholds (tune these)
+const int ON_THRESHOLD1  = 2700;  // pump1 turns ON when sensor1 > this
+const int OFF_THRESHOLD1 = 1800;  // pump1 turns OFF when sensor1 < this
 
-// Sensitivity threshold
-float threshold = 0.05;   // adjust lower = more sensitive
+const int ON_THRESHOLD2  = 1650;  // pump2 turns ON when sensor2 > this
+const int OFF_THRESHOLD2 = 1300;  // pump2 turns OFF when sensor2 < this
+
+// Timing (ms)
+const unsigned long MAX_RUNTIME   = 6UL * 60UL * 1000UL;         // 6 minutes
+const unsigned long COOLDOWN_TIME = 20UL * 60UL * 60UL * 1000UL; // 20 hours
+
+// Pump states
+bool pump1On = false;
+unsigned long pump1StartMs = 0;
+unsigned long pump1CooldownStart = 0;
+
+bool pump2On = false;
+unsigned long pump2StartMs = 0;
+unsigned long pump2CooldownStart = 0;
+
+// Function to take N readings and average them
+int readAveragedSensor(int pin, int samples = 20, int delay_us = 500) {
+  long total = 0;
+  for (int i = 0; i < samples; i++) {
+    total += analogRead(pin);
+    delayMicroseconds(delay_us);
+  }
+  return total / samples;
+}
 
 void setup() {
-  Serial.begin(9600);
-  Wire.begin();
+  Serial.begin(115200);
+  pinMode(RELAY1_PIN, OUTPUT);
+  pinMode(RELAY2_PIN, OUTPUT);
 
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(RELAY1_PIN, HIGH); // Active LOW => off initially
+  digitalWrite(RELAY2_PIN, HIGH);
 
-  digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(LED_PIN, LOW);
-
-  Serial.println("Low Power Monument Tracker Starting...");
-
-  // Start sensor
-  if (bma.beginI2C() != BMA400_OK) {
-    if (bma.beginI2C(0x15) != BMA400_OK) {
-      Serial.println("BMA400 NOT detected!");
-      while (1);
-    }
-  }
-
-  // Initial reading
-  bma.getSensorData();
-  prevX = bma.data.accelX;
-  prevY = bma.data.accelY;
-  prevZ = bma.data.accelZ;
-
-  Serial.println("System Armed (Low Power Mode)");
+  Serial.println("Two-pump controller with averaging started");
 }
 
 void loop() {
+  unsigned long now = millis();
 
-  // Read only occasionally to save power
-  bma.getSensorData();
+  // ---------- Pump 1 ----------
+  int soil1 = readAveragedSensor(SENSOR1_PIN);
 
-  float x = bma.data.accelX;
-  float y = bma.data.accelY;
-  float z = bma.data.accelZ;
+  Serial.print("Soil1(avg): "); Serial.print(soil1);
 
-  float diff = abs(x - prevX) + abs(y - prevY) + abs(z - prevZ);
+  if (!pump1On) {
+    bool cooldown_ok = (pump1CooldownStart == 0) || (now - pump1CooldownStart >= COOLDOWN_TIME);
 
-  Serial.print("Diff = ");
-  Serial.println(diff, 4);
-
-  // Wake / Alert only if disturbance occurs
-  if (diff > threshold) {
-
-    Serial.println("⚠ Disturbance Detected!");
-
-    for (int i = 0; i < 5; i++) {
-      digitalWrite(BUZZER_PIN, HIGH);
-      digitalWrite(LED_PIN, HIGH);
-      delay(150);
-
-      digitalWrite(BUZZER_PIN, LOW);
-      digitalWrite(LED_PIN, LOW);
-      delay(150);
+    if (!cooldown_ok) {
+      unsigned long remaining = (COOLDOWN_TIME - (now - pump1CooldownStart)) / 60000UL;
+      Serial.print(" | Pump1 cooldown (mins left): "); Serial.print(remaining);
+    } 
+    else if (soil1 > ON_THRESHOLD1) {
+      Serial.print(" | Pump1 -> START");
+      digitalWrite(RELAY1_PIN, LOW);
+      pump1On = true;
+      pump1StartMs = now;
     }
 
-    // refresh baseline after movement
-    prevX = x;
-    prevY = y;
-    prevZ = z;
+  } else {
+    if (soil1 < OFF_THRESHOLD1) {
+      Serial.print(" | Pump1 -> soil wet -> STOP");
+      digitalWrite(RELAY1_PIN, HIGH);
+      pump1On = false;
+      pump1CooldownStart = 0;
+    } 
+    else if (now - pump1StartMs >= MAX_RUNTIME) {
+      Serial.print(" | Pump1 -> max runtime -> STOP + cooldown");
+      digitalWrite(RELAY1_PIN, HIGH);
+      pump1On = false;
+      pump1CooldownStart = now;
+    }
   }
+  Serial.println();
 
-  // Sleep style polling delay (low power)
-  delay(1000);   // checks once every second
+  // ---------- Pump 2 ----------
+  int soil2 = readAveragedSensor(SENSOR2_PIN);
+
+  Serial.print("Soil2(avg): "); Serial.print(soil2);
+
+  if (!pump2On) {
+    bool cooldown_ok2 = (pump2CooldownStart == 0) || (now - pump2CooldownStart >= COOLDOWN_TIME);
+
+    if (!cooldown_ok2) {
+      unsigned long remaining2 = (COOLDOWN_TIME - (now - pump2CooldownStart)) / 60000UL;
+      Serial.print(" | Pump2 cooldown (mins left): "); Serial.print(remaining2);
+    } 
+    else if (soil2 > ON_THRESHOLD2) {
+      Serial.print(" | Pump2 -> START");
+      digitalWrite(RELAY2_PIN, LOW);
+      pump2On = true;
+      pump2StartMs = now;
+    }
+
+  } else {
+    if (soil2 < OFF_THRESHOLD2) {
+      Serial.print(" | Pump2 -> soil wet -> STOP");
+      digitalWrite(RELAY2_PIN, HIGH);
+      pump2On = false;
+      pump2CooldownStart = 0;
+    } 
+    else if (now - pump2StartMs >= MAX_RUNTIME) {
+      Serial.print(" | Pump2 -> max runtime -> STOP + cooldown");
+      digitalWrite(RELAY2_PIN, HIGH);
+      pump2On = false;
+      pump2CooldownStart = now;
+    }
+  }
+  Serial.println();
+
+  delay(1000);
 }
