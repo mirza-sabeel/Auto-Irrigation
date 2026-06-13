@@ -1,26 +1,18 @@
-// Two-pump irrigation control with averaging filter
-// Pump1: Relay on GPIO 26, Sensor on GPIO 35
-// Pump2: Relay on GPIO 25, Sensor on GPIO 34
-// Relay active LOW (LOW = ON, HIGH = OFF)
-
 #define RELAY1_PIN   26
 #define SENSOR1_PIN  35
 
 #define RELAY2_PIN   25
 #define SENSOR2_PIN  34
 
-// Per-pump thresholds (tune these)
-const int ON_THRESHOLD1  = 2700;  // pump1 turns ON when sensor1 > this
-const int OFF_THRESHOLD1 = 1800;  // pump1 turns OFF when sensor1 < this
+const int ON_THRESHOLD1  = 2700;
+const int OFF_THRESHOLD1 = 1800;
 
-const int ON_THRESHOLD2  = 1650;  // pump2 turns ON when sensor2 > this
-const int OFF_THRESHOLD2 = 1300;  // pump2 turns OFF when sensor2 < this
+const int ON_THRESHOLD2  = 1650;
+const int OFF_THRESHOLD2 = 1300;
 
-// Timing (ms)
-const unsigned long MAX_RUNTIME   = 6UL * 60UL * 1000UL;         // 6 minutes
-const unsigned long COOLDOWN_TIME = 20UL * 60UL * 60UL * 1000UL; // 20 hours
+const unsigned long MAX_RUNTIME   = 6UL * 60UL * 1000UL;
+const unsigned long COOLDOWN_TIME = 20UL * 60UL * 60UL * 1000UL;
 
-// Pump states
 bool pump1On = false;
 unsigned long pump1StartMs = 0;
 unsigned long pump1CooldownStart = 0;
@@ -29,7 +21,6 @@ bool pump2On = false;
 unsigned long pump2StartMs = 0;
 unsigned long pump2CooldownStart = 0;
 
-// Function to take N readings and average them
 int readAveragedSensor(int pin, int samples = 20, int delay_us = 500) {
   long total = 0;
   for (int i = 0; i < samples; i++) {
@@ -41,10 +32,11 @@ int readAveragedSensor(int pin, int samples = 20, int delay_us = 500) {
 
 void setup() {
   Serial.begin(115200);
+
   pinMode(RELAY1_PIN, OUTPUT);
   pinMode(RELAY2_PIN, OUTPUT);
 
-  digitalWrite(RELAY1_PIN, HIGH); // Active LOW => off initially
+  digitalWrite(RELAY1_PIN, HIGH);
   digitalWrite(RELAY2_PIN, HIGH);
 
   Serial.println("Two-pump controller with averaging started");
@@ -53,20 +45,26 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // ---------- Pump 1 ----------
   int soil1 = readAveragedSensor(SENSOR1_PIN);
 
-  Serial.print("Soil1(avg): "); Serial.print(soil1);
+  Serial.print("Soil1(avg): ");
+  Serial.print(soil1);
 
   if (!pump1On) {
-    bool cooldown_ok = (pump1CooldownStart == 0) || (now - pump1CooldownStart >= COOLDOWN_TIME);
+    bool cooldown_ok =
+      (pump1CooldownStart == 0) ||
+      (now - pump1CooldownStart >= COOLDOWN_TIME);
 
     if (!cooldown_ok) {
-      unsigned long remaining = (COOLDOWN_TIME - (now - pump1CooldownStart)) / 60000UL;
-      Serial.print(" | Pump1 cooldown (mins left): "); Serial.print(remaining);
-    } 
+      unsigned long remaining =
+        (COOLDOWN_TIME - (now - pump1CooldownStart)) / 60000UL;
+
+      Serial.print(" | Pump1 cooldown (mins left): ");
+      Serial.print(remaining);
+    }
     else if (soil1 > ON_THRESHOLD1) {
       Serial.print(" | Pump1 -> START");
+
       digitalWrite(RELAY1_PIN, LOW);
       pump1On = true;
       pump1StartMs = now;
@@ -75,33 +73,42 @@ void loop() {
   } else {
     if (soil1 < OFF_THRESHOLD1) {
       Serial.print(" | Pump1 -> soil wet -> STOP");
+
       digitalWrite(RELAY1_PIN, HIGH);
       pump1On = false;
       pump1CooldownStart = 0;
-    } 
+    }
     else if (now - pump1StartMs >= MAX_RUNTIME) {
       Serial.print(" | Pump1 -> max runtime -> STOP + cooldown");
+
       digitalWrite(RELAY1_PIN, HIGH);
       pump1On = false;
       pump1CooldownStart = now;
     }
   }
+
   Serial.println();
 
-  // ---------- Pump 2 ----------
   int soil2 = readAveragedSensor(SENSOR2_PIN);
 
-  Serial.print("Soil2(avg): "); Serial.print(soil2);
+  Serial.print("Soil2(avg): ");
+  Serial.print(soil2);
 
   if (!pump2On) {
-    bool cooldown_ok2 = (pump2CooldownStart == 0) || (now - pump2CooldownStart >= COOLDOWN_TIME);
+    bool cooldown_ok2 =
+      (pump2CooldownStart == 0) ||
+      (now - pump2CooldownStart >= COOLDOWN_TIME);
 
     if (!cooldown_ok2) {
-      unsigned long remaining2 = (COOLDOWN_TIME - (now - pump2CooldownStart)) / 60000UL;
-      Serial.print(" | Pump2 cooldown (mins left): "); Serial.print(remaining2);
-    } 
+      unsigned long remaining2 =
+        (COOLDOWN_TIME - (now - pump2CooldownStart)) / 60000UL;
+
+      Serial.print(" | Pump2 cooldown (mins left): ");
+      Serial.print(remaining2);
+    }
     else if (soil2 > ON_THRESHOLD2) {
       Serial.print(" | Pump2 -> START");
+
       digitalWrite(RELAY2_PIN, LOW);
       pump2On = true;
       pump2StartMs = now;
@@ -110,17 +117,20 @@ void loop() {
   } else {
     if (soil2 < OFF_THRESHOLD2) {
       Serial.print(" | Pump2 -> soil wet -> STOP");
+
       digitalWrite(RELAY2_PIN, HIGH);
       pump2On = false;
       pump2CooldownStart = 0;
-    } 
+    }
     else if (now - pump2StartMs >= MAX_RUNTIME) {
       Serial.print(" | Pump2 -> max runtime -> STOP + cooldown");
+
       digitalWrite(RELAY2_PIN, HIGH);
       pump2On = false;
       pump2CooldownStart = now;
     }
   }
+
   Serial.println();
 
   delay(1000);
